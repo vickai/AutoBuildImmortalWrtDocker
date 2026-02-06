@@ -6,7 +6,7 @@ on:
       kernel_version:
         description: 'Select Clash Meta Kernel Version'
         required: true
-        default: 'v1-smart'
+        default: 'v3-smart'
         type: choice
         options:
           - v1
@@ -17,11 +17,13 @@ on:
           - v3-smart
 
 env:
-  # 基础配置
+  # 固件版本与架构
   IM_VERSION: "24.10.1"
   TARGET_BOARD: "x86"
   TARGET_SUBTARGET: "64"
+  # 镜像名称
   IMAGE_NAME: "immortalwrt-openclash"
+  # OpenClash 仓库
   OPENCLASH_REPO: "vernesong/OpenClash"
 
 jobs:
@@ -41,58 +43,73 @@ jobs:
         run: |
           sudo -E apt-get -y update
           sudo -E apt-get -y install build-essential libncurses5-dev libncursesw5-dev \
-            zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip python3 qemu-utils
+            zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip python3 qemu-utils zstd
 
-      - name: Download ImageBuilder
+      - name: Smart Download ImageBuilder
         run: |
-          DOWNLOAD_URL="https://downloads.immortalwrt.org/releases/${IM_VERSION}/targets/${TARGET_BOARD}/${TARGET_SUBTARGET}/immortalwrt-imagebuilder-${IM_VERSION}-${TARGET_BOARD}-${TARGET_SUBTARGET}.Linux-x86_64.tar.zst"
-          echo "Downloading ImageBuilder from: $DOWNLOAD_URL"
-          wget -O imagebuilder.tar.xz "$DOWNLOAD_URL"
-          mkdir -p imagebuilder
-          tar -xJf imagebuilder.tar.xz -C imagebuilder --strip-components=1
+          # 1. 设定基础目录 URL
+          BASE_URL="https://downloads.immortalwrt.org/releases/${IM_VERSION}/targets/${TARGET_BOARD}/${TARGET_SUBTARGET}"
 
-      - name: Prepare Custom Files & Kernel
-        run: |
-          # 创建 files 目录结构，ImageBuilder 会将此目录下的文件覆盖到固件中
-          mkdir -p imagebuilder/files/etc/openclash/core
+          # 2. 下载 sha256sums 校验文件
+          echo "Fetching sha256sums to detect filename..."
+          wget -O sha256sums "$BASE_URL/sha256sums"
 
-          # 根据输入选择内核下载地址
-          KERNEL_INPUT="${{ inputs.kernel_version }}"
-          BASE_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master"
-
-          if [[ "$KERNEL_INPUT" == *"-smart"* ]]; then
-            # 提取 vX
-            VER=${KERNEL_INPUT%-smart}
-            DOWNLOAD_URL="${BASE_URL}/smart/clash-linux-amd64-${VER}.tar.gz"
-          else
-            DOWNLOAD_URL="${BASE_URL}/meta/clash-linux-amd64-${KERNEL_INPUT}.tar.gz"
-          fi
-
-          echo "Downloading Clash Meta Kernel (${KERNEL_INPUT}) from: $DOWNLOAD_URL"
-          wget -O kernel.tar.gz "$DOWNLOAD_URL"
-          if [ ! -s kernel.tar.gz ]; then
-            echo "Error: kernel download failed!"
+          if [ ! -f sha256sums ]; then
+            echo "Error: Failed to fetch sha256sums. Check version info."
             exit 1
           fi
+
+          # 3. 提取 ImageBuilder 文件名 (适配 .tar.xz 或 .tar.zst)
+          # 逻辑：查找包含 imagebuilder 和 Linux-x86_64 的行
+          IB_FILENAME=$(grep "imagebuilder" sha256sums | grep "Linux-x86_64" | head -n 1 | awk '{print $2}' | sed 's/*//g')
+
+          if [ -z "$IB_FILENAME" ]; then
+            echo "Error: ImageBuilder filename not found in sha256sums."
+            exit 1
+          fi
+
+          echo "Detected ImageBuilder: $IB_FILENAME"
+
+          # 4. 下载并解压
+          wget -O imagebuilder.tar "$BASE_URL/$IB_FILENAME"
+
+          mkdir -p imagebuilder
+          if [[ "$IB_FILENAME" == *".zst" ]]; then
+            tar -I zstd -xf imagebuilder.tar -C imagebuilder --strip-components=1
+          else
+            tar -xf imagebuilder.tar -C imagebuilder --strip-components=1
+          fi
+
+      - name: Prepare Clash Kernel
+        run: |
+          # 创建存放内核的目录 (ImageBuilder 会把 files 目录覆盖到 rootfs)
+          mkdir -p imagebuilder/files/etc/openclash/core
+
+          KERNEL_OPT="${{ inputs.kernel_version }}"
+          BASE_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master"
+
+          # 构造下载链接
+          if [[ "$KERNEL_OPT" == *"-smart"* ]]; then
+            # 提取 v1/v2/v3
+            VER=${KERNEL_OPT%-smart}
+            DOWNLOAD_URL="${BASE_URL}/smart/clash-linux-amd64-${VER}.tar.gz"
+          else
+            DOWNLOAD_URL="${BASE_URL}/meta/clash-linux-amd64-${KERNEL_OPT}.tar.gz"
+          fi
+
+          echo "Downloading Kernel: $DOWNLOAD_URL"
+          wget -O kernel.tar.gz "$DOWNLOAD_URL"
 
           # 解压并重命名为 clash_meta
           tar -xzf kernel.tar.gz
-          if [ $? -ne 0 ]; then
-            echo "Error: kernel extraction failed!"
-            exit 1
-          fi
-
           mv clash* imagebuilder/files/etc/openclash/core/clash_meta
           chmod +x imagebuilder/files/etc/openclash/core/clash_meta
-
-          echo "Kernel prepared successfully."
 
       - name: Download Latest OpenClash
         run: |
           mkdir -p imagebuilder/packages/custom
 
-          # 获取最新 Release 的下载链接
-          echo "Fetching latest OpenClash release URL..."
+          echo "Fetching latest OpenClash release..."
           OC_URL=$(curl -sL https://api.github.com/repos/${OPENCLASH_REPO}/releases/latest | \
             grep "browser_download_url" | \
             grep "luci-app-openclash" | \
@@ -100,54 +117,49 @@ jobs:
             head -n 1 | \
             cut -d '"' -f 4)
 
-          if [ -z "$OC_URL" ]; then
-            echo "Error: Could not find OpenClash download URL."
-            exit 1
-          fi
-
-          echo "Downloading OpenClash from: $OC_URL"
           wget -P imagebuilder/packages/custom "$OC_URL"
 
       - name: Generate Rootfs
         working-directory: ./imagebuilder
         run: |
-          # 读取 packages 并转换为一行，去除注释
+          # 读取 packages.txt (去除注释和空行)
           PACKAGES_LIST=$(grep -vE '^\s*#' ../packages.txt | tr '\n' ' ')
-          echo "Packages to install: $PACKAGES_LIST"
 
           # 构建 rootfs
           make image PROFILE="generic" PACKAGES="$PACKAGES_LIST" FILES="files"
 
-      - name: Prepare Rootfs for Docker
+      - name: Prepare Docker Context
         run: |
-          # 查找生成的 rootfs tarball
+          # 提取 rootfs.tar.gz
           find imagebuilder/bin/targets/${TARGET_BOARD}/${TARGET_SUBTARGET} -name "*rootfs.tar.gz" -exec mv {} ./rootfs.tar.gz \;
 
           if [ ! -f rootfs.tar.gz ]; then
-            echo "Error: rootfs.tar.gz generation failed!"
+            echo "Error: rootfs.tar.gz not found!"
             exit 1
           fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to GitHub Container Registry
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and Push Docker Image
+      - name: Build and Push
         run: |
-          # 生成时间戳 tag
-          DATE_TAG=$(date +%Y%m%d%H%M)
+          # 生成时间戳 (YYYYMMDDHHMM) - 使用 UTC+8 (北京/台北时间)
+          DATE_TAG=$(TZ='Asia/Shanghai' date +%Y%m%d%H%M)
 
-          # 转换为小写 (Docker image name 必须小写)
+          # 转换为小写
           REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           FULL_IMAGE_NAME="ghcr.io/${REPO_OWNER}/${IMAGE_NAME}"
 
-          echo "Building and pushing to: $FULL_IMAGE_NAME"
+          echo "Pushing tags:"
+          echo "  - ${FULL_IMAGE_NAME}:${DATE_TAG}"
+          echo "  - ${FULL_IMAGE_NAME}:latest"
 
           docker buildx build \
             --platform linux/amd64 \
