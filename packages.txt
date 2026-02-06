@@ -1,0 +1,81 @@
+# ===========================
+#   LuCI 基础 + 中文界面
+# ===========================
+luci
+luci-base
+luci-compat
+luci-lib-ipkg
+i18n-base-zh-cn
+luci-theme-argon
+luci-mod-admin-full
+
+# ===========================
+#   基础系统
+# ===========================
+ca-bundle
+ca-certificates
+curl
+wget
+wget-ssl
+bash
+unzip
+coreutils-nohup
+tar
+zoneinfo-core
+zoneinfo-asia
+uclient-fetch
+
+# ===========================
+#   OpenClash 必需
+# ===========================
+dnsmasq-full
+ruby
+ruby-yaml
+luci-app-openclash
+
+# ===========================
+#   旁路由必需：TProxy / nftables
+# ===========================
+kmod-tun
+kmod-nft-core
+kmod-nft-nat
+kmod-nft-tproxy
+kmod-nft-socket
+kmod-nft-ipv4
+kmod-nft-ipv6
+
+iptables-nft
+ip6tables-nft
+iptables-mod-tproxy
+iptables-mod-extra
+
+ip-full
+ipset
+
+# ===========================
+#   旁路由增强（推荐）
+# ===========================
+kmod-nft-fullcone
+kmod-nft-fib
+kmod-nft-bridge
+kmod-inet-diag
+nss-mdns
+
+# ===========================
+#   调试工具（可选）
+# ===========================
+htop
+vim
+tcpdump
+netcat
+resolveip
+openssh-sftp-server
+
+# ===========================
+#   移除不必要的包
+# ===========================
+-kmod-ath9k
+-wpad-basic
+-iwinfo
+-dnsmasq
+-procd-ujail
