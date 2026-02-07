@@ -6,7 +6,7 @@ on:
       kernel_version:
         description: 'Select Clash Meta Kernel Version'
         required: true
-        default: 'v3-smart'
+        default: 'v1-smart'  # 推荐默认 v3-smart，性能更好
         type: choice
         options:
           - v1
@@ -42,8 +42,10 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo -E apt-get -y update
+          # 新增 genisoimage 解决 mkisofs 缺失问题
+          # 新增 zstd 用于解压新版固件
           sudo -E apt-get -y install build-essential libncurses5-dev libncursesw5-dev \
-            zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip python3 qemu-utils zstd
+            zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip python3 qemu-utils zstd genisoimage
 
       - name: Smart Download ImageBuilder
         run: |
@@ -61,7 +63,7 @@ jobs:
 
           # 3. 提取 ImageBuilder 文件名 (适配 .tar.xz 或 .tar.zst)
           # 逻辑：查找包含 imagebuilder 和 Linux-x86_64 的行
-          # 修复：使用 tr -d '*' 删除星号，比 sed 更安全
+          # 修复：使用 tr -d '*' 删除可能存在的星号
           IB_FILENAME=$(grep "imagebuilder" sha256sums | grep "Linux-x86_64" | head -n 1 | awk '{print $2}' | tr -d '*')
 
           if [ -z "$IB_FILENAME" ]; then
@@ -136,10 +138,23 @@ jobs:
       - name: Generate Rootfs
         working-directory: ./imagebuilder
         run: |
-          # 读取 packages.txt (去除注释和空行)
-          PACKAGES_LIST=$(grep -vE '^\s*#' ../packages.txt | tr '\n' ' ')
+          # 1. 处理 packages.txt:
+          #    - 去除注释 (#)
+          #    - 去除 Windows 换行符 (\r) [关键修复]
+          #    - 将换行转为空格
+          PACKAGES_LIST=$(grep -vE '^\s*#' ../packages.txt | tr -d '\r' | tr '\n' ' ')
 
-          # 构建 rootfs
+          echo "Final Packages List: $PACKAGES_LIST"
+
+          # 2. 修改 .config 禁用不需要的镜像格式 [关键优化]
+          #    这可以避免 mkisofs 报错，并大幅加快构建速度，因为我们只需要 rootfs
+          sed -i 's/CONFIG_ISO_IMAGES=y/# CONFIG_ISO_IMAGES is not set/' .config
+          sed -i 's/CONFIG_VHDX_IMAGES=y/# CONFIG_VHDX_IMAGES is not set/' .config
+          sed -i 's/CONFIG_VMDK_IMAGES=y/# CONFIG_VMDK_IMAGES is not set/' .config
+          sed -i 's/CONFIG_QCOW2_IMAGES=y/# CONFIG_QCOW2_IMAGES is not set/' .config
+          sed -i 's/CONFIG_VDI_IMAGES=y/# CONFIG_VDI_IMAGES is not set/' .config
+
+          # 3. 构建 rootfs
           make image PROFILE="generic" PACKAGES="$PACKAGES_LIST" FILES="files"
 
       - name: Prepare Docker Context
