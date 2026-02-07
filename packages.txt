@@ -1,5 +1,5 @@
 # ===========================
-#   LuCI 基础 + 汉化 (修复包名)
+#   LuCI 基础 + 汉化
 # ===========================
 luci
 luci-base
@@ -9,7 +9,6 @@ luci-theme-argon
 luci-mod-admin-full
 luci-i18n-base-zh-cn
 luci-i18n-firewall-zh-cn
-luci-i18n-opkg-zh-cn
 
 # ===========================
 #   基础系统 & 工具
@@ -24,35 +23,28 @@ coreutils-nohup
 tar
 zoneinfo-core
 zoneinfo-asia
-# 文本编辑 & 文件传输
 vim-full
 openssh-sftp-server
 
 # ===========================
 #   Docker/OpenClash 关键依赖
 # ===========================
-# 替换默认 dnsmasq
 dnsmasq-full
-# OpenClash 脚本解析
 ruby
 ruby-yaml
-# 权限管理 (Docker 环境常需，强烈建议添加)
 libcap
 libcap-bin
-# 核心插件
 luci-app-openclash
 
 # ===========================
 #   网络与防火墙 (TProxy/Nftables)
 # ===========================
-# 旁路由核心模块
+# 核心内核模块
 kmod-tun
 kmod-nft-core
 kmod-nft-nat
 kmod-nft-tproxy
 kmod-nft-socket
-kmod-nft-ipv4
-kmod-nft-ipv6
 kmod-nft-fullcone
 kmod-inet-diag
 
@@ -63,7 +55,7 @@ iptables-mod-tproxy
 iptables-mod-extra
 iptables-mod-nat-extra
 
-# IP 工具 (建议添加 bind-dig 用于调试 DNS)
+# IP 工具
 ip-full
 ipset
 bind-dig
@@ -77,6 +69,5 @@ netcat
 -wpad-basic
 -iwinfo
 -iw
-# 移除基础版 dnsmasq 以安装 full 版
 -dnsmasq
 -procd-ujail
