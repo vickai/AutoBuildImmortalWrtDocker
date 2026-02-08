@@ -165,10 +165,7 @@ jobs:
           sed -i '/CONFIG_TARGET_ROOTFS_TARGZ/d' .config
           echo "CONFIG_TARGET_ROOTFS_TARGZ=y" >> .config
 
-          # 重新整理 defconfig 以应用更改
-          make defconfig
-
-          # 3. 构建 rootfs
+          # 3. 构建 rootfs (直接运行 make image，无需 defconfig)
           make image PROFILE="generic" PACKAGES="$PACKAGES_LIST" FILES="files"
 
       - name: Prepare Docker Context
