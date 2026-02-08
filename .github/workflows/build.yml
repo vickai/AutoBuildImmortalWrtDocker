@@ -42,8 +42,9 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo -E apt-get -y update
-          # 新增 genisoimage 解决 mkisofs 缺失问题
-          # 新增 zstd 用于解压新版固件
+          # 安装构建所需依赖
+          # genisoimage: 解决 mkisofs 缺失报错
+          # zstd: 解决新版固件解压问题
           sudo -E apt-get -y install build-essential libncurses5-dev libncursesw5-dev \
             zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip python3 qemu-utils zstd genisoimage
 
@@ -62,8 +63,6 @@ jobs:
           fi
 
           # 3. 提取 ImageBuilder 文件名 (适配 .tar.xz 或 .tar.zst)
-          # 逻辑：查找包含 imagebuilder 和 Linux-x86_64 的行
-          # 修复：使用 tr -d '*' 删除可能存在的星号
           IB_FILENAME=$(grep "imagebuilder" sha256sums | grep "Linux-x86_64" | head -n 1 | awk '{print $2}' | tr -d '*')
 
           if [ -z "$IB_FILENAME" ]; then
@@ -93,7 +92,6 @@ jobs:
 
           # 构造下载链接
           if [[ "$KERNEL_OPT" == *"-smart"* ]]; then
-            # 提取 v1/v2/v3
             VER=${KERNEL_OPT%-smart}
             DOWNLOAD_URL="${BASE_URL}/smart/clash-linux-amd64-${VER}.tar.gz"
           else
@@ -114,9 +112,7 @@ jobs:
 
           echo "Fetching OpenClash release info..."
 
-          # 1. 使用 /releases 接口以获取列表 (包含 Pre-release/Beta)
-          # 2. 添加 GitHub Token 避免 API 限流
-          # 3. 提取第一个(最新的)包含 luci-app-openclash 和 .ipk 的下载链接
+          # 使用 /releases 接口以获取列表 (包含 Pre-release/Beta)
           OC_URL=$(curl -sL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${OPENCLASH_REPO}/releases" | \
             grep "browser_download_url" | \
@@ -125,10 +121,8 @@ jobs:
             head -n 1 | \
             cut -d '"' -f 4)
 
-          # 增加空值检查
           if [ -z "$OC_URL" ]; then
             echo "Error: Failed to extract OpenClash download URL."
-            echo "Possible reasons: API rate limit exceeded, or no IPK found in the latest release."
             exit 1
           fi
 
@@ -138,21 +132,41 @@ jobs:
       - name: Generate Rootfs
         working-directory: ./imagebuilder
         run: |
-          # 1. 处理 packages.txt:
-          #    - 去除注释 (#)
-          #    - 去除 Windows 换行符 (\r) [关键修复]
-          #    - 将换行转为空格
+          # 1. 处理 packages.txt (去注释、去 Windows 换行符)
           PACKAGES_LIST=$(grep -vE '^\s*#' ../packages.txt | tr -d '\r' | tr '\n' ' ')
 
           echo "Final Packages List: $PACKAGES_LIST"
 
-          # 2. 修改 .config 禁用不需要的镜像格式 [关键优化]
-          #    这可以避免 mkisofs 报错，并大幅加快构建速度，因为我们只需要 rootfs
-          sed -i 's/CONFIG_ISO_IMAGES=y/# CONFIG_ISO_IMAGES is not set/' .config
-          sed -i 's/CONFIG_VHDX_IMAGES=y/# CONFIG_VHDX_IMAGES is not set/' .config
-          sed -i 's/CONFIG_VMDK_IMAGES=y/# CONFIG_VMDK_IMAGES is not set/' .config
-          sed -i 's/CONFIG_QCOW2_IMAGES=y/# CONFIG_QCOW2_IMAGES is not set/' .config
-          sed -i 's/CONFIG_VDI_IMAGES=y/# CONFIG_VDI_IMAGES is not set/' .config
+          # 2. 【关键优化】强力禁用非 docker 格式
+          # 我们只需要 CONFIG_TARGET_ROOTFS_TARGZ=y
+
+          # 先移除配置文件中已有的相关定义
+          sed -i '/CONFIG_TARGET_ROOTFS_EXT4FS/d' .config
+          sed -i '/CONFIG_TARGET_ROOTFS_SQUASHFS/d' .config
+          sed -i '/CONFIG_ISO_IMAGES/d' .config
+          sed -i '/CONFIG_VHDX_IMAGES/d' .config
+          sed -i '/CONFIG_VMDK_IMAGES/d' .config
+          sed -i '/CONFIG_VDI_IMAGES/d' .config
+          sed -i '/CONFIG_QCOW2_IMAGES/d' .config
+          sed -i '/CONFIG_TARGET_IMAGES_GZIP/d' .config
+
+          # 强制写入 "is not set" 到 .config
+          cat <<EOF >> .config
+          # CONFIG_TARGET_ROOTFS_EXT4FS is not set
+          # CONFIG_TARGET_ROOTFS_SQUASHFS is not set
+          # CONFIG_ISO_IMAGES is not set
+          # CONFIG_VHDX_IMAGES is not set
+          # CONFIG_VMDK_IMAGES is not set
+          # CONFIG_VDI_IMAGES is not set
+          # CONFIG_QCOW2_IMAGES is not set
+          EOF
+
+          # 确保 TARGZ 开启
+          sed -i '/CONFIG_TARGET_ROOTFS_TARGZ/d' .config
+          echo "CONFIG_TARGET_ROOTFS_TARGZ=y" >> .config
+
+          # 重新整理 defconfig 以应用更改
+          make defconfig
 
           # 3. 构建 rootfs
           make image PROFILE="generic" PACKAGES="$PACKAGES_LIST" FILES="files"
@@ -164,6 +178,8 @@ jobs:
 
           if [ ! -f rootfs.tar.gz ]; then
             echo "Error: rootfs.tar.gz not found!"
+            # 调试：列出 build_dir 看看生成了什么
+            ls -R imagebuilder/bin/targets/
             exit 1
           fi
 
@@ -179,19 +195,17 @@ jobs:
 
       - name: Build and Push
         run: |
-          # 生成时间戳 (YYYYMMDDHHMM) - 使用 UTC+8 (北京/台北时间)
+          # 生成时间戳
           DATE_TAG=$(TZ='Asia/Shanghai' date +%Y%m%d%H%M)
-
-          # 转换为小写
           REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           FULL_IMAGE_NAME="ghcr.io/${REPO_OWNER}/${IMAGE_NAME}"
 
-          echo "Pushing tags:"
-          echo "  - ${FULL_IMAGE_NAME}:${DATE_TAG}"
-          echo "  - ${FULL_IMAGE_NAME}:latest"
+          echo "Pushing tags: latest, $DATE_TAG"
 
+          # 【关键修复】添加 --provenance=false 移除 unknown/unknown 架构
           docker buildx build \
             --platform linux/amd64 \
+            --provenance=false \
             --tag "${FULL_IMAGE_NAME}:${DATE_TAG}" \
             --tag "${FULL_IMAGE_NAME}:latest" \
             --file docker/Dockerfile \
