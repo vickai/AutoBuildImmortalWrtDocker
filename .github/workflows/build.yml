@@ -176,12 +176,20 @@ jobs:
             --push \
             .
 
-      - name: Delete Old Images
+      - name: Delete Old ImmortalWrt Images
         uses: actions/delete-package-versions@v5
         continue-on-error: true
         with:
-          package-name: |
-            immortalwrt
-            immortalwrt-openclash
+          package-name: 'immortalwrt'
           package-type: 'container'
           min-versions-to-keep: 3
+          ignore-versions: 'latest'
+
+      - name: Delete Old OpenClash Images
+        uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          package-name: 'immortalwrt-openclash'
+          package-type: 'container'
+          min-versions-to-keep: 3
+          ignore-versions: 'latest'
